@@ -15,8 +15,8 @@ def clean(spark: SparkSession, environment: str, tag: str):
     
     ###AWS path to find input and path to output cleaned version.
     
-    questions_path = f"s3a://{llm_bucket}/input/{tag}/questions.json"
-    answers_path = f"s3a://{llm_bucket}/input/{tag}/answers.json"
+    questions_path = f"s3a://{llm_bucket}/input/wilsonnietoluna/{tag}/questions.json"
+    answers_path = f"s3a://{llm_bucket}/input/wilsonnietoluna/{tag}/answers.json"
     output_path = f"s3a://{llm_bucket}/cleaned/wilsonnietoluna/{tag}"
     
     ##Cleaning of questions according to requested columns.
