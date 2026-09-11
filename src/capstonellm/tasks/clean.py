@@ -3,11 +3,39 @@ import logging
 from pyspark.sql import SparkSession
 from capstonellm.common.catalog import llm_bucket
 from capstonellm.common.spark import ClosableSparkSession
+import pyspark.sql.functions as ps
+
 
 logger = logging.getLogger(__name__)
 
 def clean(spark: SparkSession, environment: str, tag: str):
-    pass
+
+    ###Function cleans the data, joins answers and wuestions via the question id, for now keeps all the answers, maybe better to feed only accepted answer?
+    ###Another question: Should I clean the httml code?->Would be nice, maybe if I have extra time, for now lets just move on.
+    
+    ###AWS path to find input and path to output cleaned version.
+    
+    questions_path = f"s3a://{llm_bucket}/input/{tag}/questions.json"
+    answers_path = f"s3a://{llm_bucket}/input/{tag}/answers.json"
+    output_path = f"s3a://{llm_bucket}/cleaned/wilsonnietoluna/{tag}"
+    
+    ##Cleaning of questions according to requested columns.
+    raw_questions = spark.read.json(questions_path) 
+    questions = (raw_questions.select(ps.explode("items").alias("item")).select("item.*").select("question_id", "title", ps.col("body").alias("question"), "link"))
+    
+    ##Cleaning of answers according to the columns of questions.
+    raw_answers = spark.read.json(answers_path)       
+    answers = (raw_answers.select(ps.explode("items").alias("item")).select("item.*").select("answer_id", "question_id", ps.col("body").alias("answer"), "is_accepted", "score"))
+    
+    ##Join of all answers per one question.
+    answers_per_question = (answers.groupBy("question_id").agg(ps.collect_list("answer_id").alias("answer_id"), ps.collect_list("answer").alias("answer")))
+    cleaned_data = questions.join(answers_per_question, on="question_id", how="inner")
+    
+    ##Output the data to AWS
+    cleaned_data.write.mode("overwrite").option("maxRecordsPerFile", 1).json(output_path)
+    
+
+
 
 def main():
     parser = argparse.ArgumentParser(description="capstone_llm")
