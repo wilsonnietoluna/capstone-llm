@@ -1,0 +1,143 @@
+import argparse
+from typing import List
+import logging
+import json
+import requests
+import time
+import os
+logger = logging.getLogger(__name__)
+
+def ingest(tag: str):
+    ##Take all questions from stackoverflow using a while so it stops when there are no more pages. 
+
+    all_questions = []
+
+    page = 1
+    has_more = True
+    max_pages = 25 # To avoid hitting the API limit, we will limit the number of pages to 25. 
+
+    while has_more and page <= max_pages:
+
+        questions_url = "https://api.stackexchange.com/2.3/questions"
+        questions_params = {"site": "stackoverflow", "tagged": tag, "pagesize": 100, "page": page, "filter": "withbody"}
+
+        response = requests.get(questions_url, params=questions_params)
+        if response.status_code != 200:
+            print("Stack Exchange API error:")
+            print(response.text)
+        response.raise_for_status()
+        questions_page = response.json()
+
+        for question in questions_page["items"]:
+            all_questions.append(question)
+
+        if "backoff" in questions_page:
+            time.sleep(questions_page["backoff"])
+        
+        has_more = questions_page["has_more"]
+        page += 1
+
+    if has_more:
+        print(
+            f"Reached the anonymous API limit. "
+            f"Using the first {len(all_questions)} questions."
+        )
+    
+    print("Total questions:", len(all_questions))
+
+
+    ## Get questions ids for answers.
+
+    question_ids = []
+
+    for question in all_questions:
+        question_ids.append(question["question_id"])
+
+
+    ## Get answers with same logic as the questions.
+
+    all_answers = []
+
+    # API accepts maximum 100 question IDs at a time
+    for start in range(0, len(question_ids), 100):
+
+        id_batch = question_ids[start:start + 100]
+        ids_list = []
+
+        for qid in id_batch:
+            ids_list.append(str(qid))
+
+        ids = ";".join(ids_list)
+
+
+        page = 1
+        has_more = True
+
+        while has_more:
+
+            answers_url = (f"https://api.stackexchange.com/2.3/questions/{ids}/answers")
+
+            answers_params = {"site": "stackoverflow", "pagesize": 100, "page": page, "filter": "withbody"}
+
+            response = requests.get(answers_url, params=answers_params)
+            if response.status_code != 200:
+                print("Stack Exchange API error:")
+                print(response.text)
+            
+            response.raise_for_status()
+
+            answers_page = response.json()
+
+            for answer in answers_page["items"]:
+                all_answers.append(answer)
+
+            if "backoff" in answers_page:
+                time.sleep(answers_page["backoff"])
+            
+            has_more = answers_page["has_more"]
+            page += 1
+
+
+    print("Total answers:", len(all_answers))
+
+
+    ## Put data back to the same format for clean code. 
+
+    questions = {"items": all_questions}
+
+    answers = {"items": all_answers}
+
+
+    ## Upload data locally
+
+    output_dir = f"local/data/raw/{tag}"
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    questions_path = f"{output_dir}/questions.json"
+    answers_path = f"{output_dir}/answers.json"
+
+    with open(questions_path, "w") as file:
+        json.dump(questions, file)
+
+    with open(answers_path, "w") as file:
+        json.dump(answers, file)
+
+    print(f"Questions saved to: {questions_path}")
+    print(f"Answers saved to: {answers_path}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="stackoverflow ingest")
+    parser.add_argument(
+        "-t", "--tag", dest="tag", help="Tag of the question in stackoverflow to process",
+        default="python-polars", required=False
+    )
+    args = parser.parse_args()
+    logger.info("Starting the ingest job")
+
+    ingest(args.tag)
+
+
+if __name__ == "__main__":
+    main()
