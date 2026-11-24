@@ -1,10 +1,8 @@
 capstone_llm_duckdb:
-
   target: dev
 
   outputs:
-
     dev:
       type: duckdb
-      path: local/data/cleaned/dbt_duckdb/capstone.duckdb
+      path: "{{ env_var('DBT_DUCKDB_PATH', 'local/data/cleaned/dbt_duckdb/capstone.duckdb') }}"
       threads: 4
