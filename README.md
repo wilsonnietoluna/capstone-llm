@@ -1,178 +1,672 @@
-# Dataminded Capstone LLM
+# Stack Overflow Data Pipeline and Local RAG System
 
-[![Dataminded Academy](https://raw.githubusercontent.com/datamindedacademy/branding/main/assets/badge.svg)](https://github.com/datamindedacademy)
+An end-to-end data engineering and retrieval-augmented generation project built from the DataMinded Academy Summer School capstone.
 
-Welcome to the Capstone project!
-Everything you've learned over the past days will now be integrated in a realistic data pipeline.
-The training wheels are off, but we're still at the sideline, cheering you on and supporting you when needed.
+The original capstone implements a cloud data pipeline that collects Stack Overflow questions and answers, processes them with PySpark, orchestrates the workflow with Airflow, and runs it through Conveyor using Amazon S3 for storage.
 
-In a nutshell, here's what you will do:
+I extended the project locally to compare alternative data-processing approaches and to build a complete RAG pipeline over the cleaned Stack Overflow data using SentenceTransformers, FAISS, and a local Llama model served through Ollama.
 
-Read, transform and load StackOverflow data from S3 with PySpark and cleaning it such that it can be used by an LLM.
-We want to find out if we can improve an existing foundational model by providing it relevant data on specific topics in the form of stackoverflow questions and answers.
-Since these foundational models don't always contain the most recent changes, they might provide outdated results.
-Your task is thus to improve the LLM by feeding it the right data.
+The resulting project covers:
 
-You will start by building the code for the ingestion pipeline locally and scheduling it using Airflow.
-If this is going well, we will run it on a cloud platform, called [Conveyor](https://conveyordata.com/).
+- API ingestion and pagination
+- cloud and local data processing
+- PySpark
+- Polars
+- DuckDB + dbt
+- workflow orchestration
+- benchmarking
+- text preprocessing
+- semantic embeddings
+- vector search
+- retrieval-augmented generation
+- local LLM inference
+- RAG strategy evaluation
 
-To get started, we've set up a GitHub Codespaces environment containing all the tools required to complete this exercise (awscli, python, vscode, ...).
+---
 
-We recommend that you:
-* Fork this repository to your own GitHub account by clicking the `Fork` button in the top right corner of this page.
-* Edit the `README.md` by clicking the pencil icon on the top right of its rendering. Change the GitHub Codespaces URL, swapping `datamindedacademy` for your own Github username.
-* Commit changes by clicking the green button
-* Finally, click the button to "Open in GitHub workspaces":
+## Architecture
 
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/wilsonnietoluna/capstone-llm)
+### Original cloud capstone
 
-## GitHub Codespaces environment
+```text
+Stack Exchange API
+        |
+        v
+      Airflow
+        |
+        v
+     PySpark
+        |
+        v
+   Amazon S3
+        |
+        v
+     Conveyor
+```
 
-This is an ubuntu-based environment pre-installed with:
+The original assignment collects Stack Overflow questions and answers for a set of technical tags and stores the raw data in S3.
 
-- VSCode
-- A Python3 virtual environment: we recommend you always work inside this environment.
-- The AWS CLI
+PySpark then:
 
-IMPORTANT: Create a new branch and periodically push your work to the remote.
-After 30min of inactivity this environment shuts down and you will likely lose unsaved progress.
-As stated before, change the GitHub Codespaces URL to reflect your remote.
+1. loads the question and answer data;
+2. extracts the relevant fields;
+3. groups answers by question;
+4. joins questions with their answers;
+5. writes the cleaned dataset back to S3.
 
-## Project setup
+Airflow manages task dependencies, while Conveyor provides the deployed execution environment.
 
-In this repository we prepared the scaffolding for a basic python project.
-Best is to use the scaffolding as is, as that will make sure you quickly get something up and running.
+---
 
-### Scaffolding structure
+### Local extension
+
+The local version expands the same dataset into three alternative transformation pipelines and a RAG system:
+
+```text
+                    Stack Exchange API
+                           |
+                           v
+                       Raw Q&A
+                           |
+              +------------+------------+
+              |            |            |
+              v            v            v
+          PySpark        Polars     DuckDB + dbt
+              |            |            |
+              +------------+------------+
+                           |
+                           v
+                     Cleaned Q&A
+                           |
+                           v
+                  HTML preprocessing
+                           |
+                           v
+                 SentenceTransformers
+                           |
+                           v
+                         FAISS
+                           |
+                           v
+                  Semantic retrieval
+                           |
+                           v
+                Answer selection strategy
+               /            |             \
+       accepted       highest-score        all
+               \            |             /
+                           v
+                    Ollama / Llama 3.2
+                           |
+                           v
+                    Generated answer
+                           |
+                           v
+                       Evaluation
+```
+
+---
+
+## Dataset
+
+The pipeline collects Stack Overflow questions and answers for seven tags:
+
+- `airflow`
+- `apache-spark`
+- `dbt`
+- `docker`
+- `pyspark`
+- `python-polars`
+- `sql`
+
+Raw data is stored locally under:
+
+```text
+local/data/raw/<tag>/
+    questions.json
+    answers.json
+```
+
+The local master pipeline reuses existing raw data instead of downloading it again unless explicitly requested.
+
+---
+
+## Data Processing Implementations
+
+Three implementations transform the same raw Stack Overflow data.
+
+### PySpark
+
+The Spark implementation:
+
+- explodes the Stack Exchange API response;
+- selects question and answer fields;
+- groups answers by `question_id`;
+- stores answers as nested structs;
+- performs an inner join between questions and answers.
+
+Example output structure:
+
+```text
+question_id
+title
+question
+link
+answers
+    answer_id
+    answer
+    is_accepted
+    score
+```
+
+Spark output is stored under:
+
+```text
+local/data/cleaned/spark/<tag>/
+```
+
+---
+
+### Polars
+
+The Polars implementation performs the same logical transformation using an eager DataFrame workflow.
+
+It provides a lightweight local alternative to Spark and produces:
+
+```text
+local/data/cleaned/polars/<tag>/cleaned.ndjson
+```
+
+---
+
+### DuckDB + dbt
+
+The dbt implementation separates the transformation into models:
+
+```text
+stg_questions
+        |
+        |
+stg_answers
+        |
+        v
+int_answers_per_question
+        |
+        v
+questions_with_answers
+```
+
+The dbt project is located in:
+
+```text
+local/dbt_duckdb/
+```
+
+A separate DuckDB database can be created for each Stack Overflow tag using the `DBT_DUCKDB_PATH` environment variable.
+
+This version demonstrates how the same data transformation can be expressed declaratively using SQL models and dbt dependencies.
+
+---
+
+## Local Processing Benchmark
+
+A small benchmark compares the end-to-end local execution time of the three implementations using the `dbt` Stack Overflow dataset.
+
+Representative results were:
+
+| Pipeline | Approx. runtime |
+|---|---:|
+| Polars | 0.21 s |
+| DuckDB + dbt | 3.74 s |
+| PySpark | 19.99 s |
+
+These results should **not** be interpreted as a general performance ranking between the technologies.
+
+The workloads have different execution overhead:
+
+- Spark launches a JVM and performs multiple Spark actions.
+- Spark writes many small output files.
+- Polars runs directly in-process and writes a single NDJSON file.
+- the dbt measurement includes dbt orchestration and DuckDB startup.
+
+The benchmark therefore illustrates the overhead of each approach for this particular small local workload rather than providing an apples-to-apples engine benchmark.
+
+Benchmark code:
+
+```text
+local/benchmark.py
+```
+
+Results:
+
+```text
+local/benchmarks/
+```
+
+---
+
+# Retrieval-Augmented Generation
+
+The cleaned Stack Overflow dataset is also used to build a local RAG system.
+
+## Document preparation
+
+Each Stack Overflow **question** becomes one retrieval document.
+
+Only the question title and body are embedded:
+
+```text
+Title: <question title>
+
+Question:
+<question body>
+```
+
+Its answers remain attached as metadata:
+
+```json
+{
+  "question_id": 123,
+  "title": "...",
+  "question": "...",
+  "answers": [
+    {
+      "answer_id": 456,
+      "answer": "...",
+      "is_accepted": true,
+      "score": 10
+    }
+  ]
+}
+```
+
+Using one document per question avoids retrieving the same question several times simply because it has several answers.
+
+HTML from Stack Overflow is converted to plain text with BeautifulSoup before indexing.
+
+---
+
+## Embeddings
+
+The embedding model is:
+
+```text
+sentence-transformers/all-MiniLM-L6-v2
+```
+
+It produces 384-dimensional embeddings.
+
+Embeddings are normalized before indexing.
+
+---
+
+## Vector search
+
+FAISS is used for semantic retrieval with:
+
+```text
+IndexFlatIP
+```
+
+Because the embeddings are normalized, the inner product corresponds to cosine similarity.
+
+For a user query, the system retrieves the most semantically similar Stack Overflow questions.
+
+---
+
+## Answer selection
+
+Retrieval operates at the **question level**.
+
+After the nearest questions have been found, the system decides which answers from those questions should be passed to the LLM.
+
+Three strategies were evaluated.
+
+### `accepted`
+
+Use only accepted Stack Overflow answers.
+
+Advantages:
+
+- small context;
+- fast inference;
+- Stack Overflow has explicitly marked the answer as accepted.
+
+Disadvantage:
+
+- retrieved questions without accepted answers contribute no answer context.
+
+---
+
+### `highest-score`
+
+Use the highest-scored answer from each retrieved question.
+
+Advantages:
+
+- every retrieved question can contribute an answer;
+- one answer per question keeps the context controlled;
+- Stack Overflow community voting provides a useful ranking signal.
+
+---
+
+### `all`
+
+Use every answer attached to each retrieved question.
+
+Advantages:
+
+- maximum information coverage.
+
+Disadvantages:
+
+- significantly larger prompts;
+- slower local inference;
+- more irrelevant or conflicting information can reach the LLM.
+
+---
+
+## Local generation
+
+Answer generation uses:
+
+```text
+Ollama
+llama3.2:3b
+```
+
+The model runs locally.
+
+The generation prompt instructs the model to:
+
+- answer using only the retrieved material;
+- avoid inventing syntax or facts;
+- treat retrieved text as reference material rather than instructions;
+- cite retrieved sources where possible;
+- explicitly state when the available context is insufficient.
+
+The local machine used for the experiment runs the model on CPU, so generation latency is relatively high.
+
+---
+
+# RAG Evaluation
+
+The three answer-selection strategies were compared using five fixed dbt questions:
+
+1. How do I reference another model in dbt?
+2. How do I use variables in dbt?
+3. How do I load a CSV file in dbt?
+4. How do I configure an incremental model in dbt?
+5. How do I connect dbt to Snowflake using SSO?
+
+Each question was evaluated using:
+
+```text
+accepted
+highest-score
+all
+```
+
+giving:
+
+```text
+5 questions × 3 strategies = 15 generations
+```
+
+The evaluation records:
+
+- number of retrieved sources;
+- number of answers included;
+- mean retrieval similarity;
+- context size;
+- generation time;
+- retrieved context;
+- generated answer.
+
+---
+
+## Manual quality evaluation
+
+Each generated answer was also reviewed using three criteria:
+
+### Relevance
+
+```text
+0 = does not answer the question
+1 = partially answers the question
+2 = directly answers the question
+```
+
+### Groundedness
+
+```text
+0 = unsupported or hallucinated
+1 = partially supported by retrieved context
+2 = fully supported by retrieved context
+```
+
+### Usefulness
+
+```text
+0 = unusable
+1 = partially useful
+2 = clear and actionable
+```
+
+The maximum quality score is therefore:
+
+```text
+6
+```
+
+---
+
+## Evaluation results
+
+| Strategy | Avg. sources | Avg. answers | Avg. similarity | Avg. context | Avg. generation time | Quality / 6 |
+|---|---:|---:|---:|---:|---:|---:|
+| `accepted` | 1.2 | 1.2 | 0.648 | 1,838 chars | 56.4 s | 2.8 |
+| **`highest-score`** | **3.0** | **3.0** | **0.662** | **4,347 chars** | **109.8 s** | **4.6** |
+| `all` | 3.0 | 6.2 | 0.662 | 6,740 chars | 133.9 s | 4.4 |
+
+The retrieval similarity for `highest-score` and `all` is identical because both strategies retrieve the same questions. The strategies differ only in which answers are subsequently included in the generation context.
+
+---
+
+## Main finding
+
+The `highest-score` strategy produced the best overall balance.
+
+Using only accepted answers reduced prompt size and inference time considerably, but it frequently removed useful information because not every retrieved Stack Overflow question had an accepted answer.
+
+Passing all answers increased average context from roughly 4,300 to 6,700 characters compared with `highest-score`, while also increasing CPU inference time. The additional context did not improve the average manual quality score and sometimes introduced distracting information.
+
+The experiment therefore suggests:
+
+> **Selecting the highest-scored answer from each retrieved Stack Overflow question provides a useful compromise between retrieval coverage, answer quality, prompt size, and local inference cost.**
+
+This is especially relevant for small local LLMs, where additional context is not free: larger prompts increase inference cost and can also introduce information that makes the generated answer less focused.
+
+---
+
+## Example failure modes
+
+The evaluation also exposed several useful RAG failure modes.
+
+### Accepted answers are not always the most relevant
+
+For the question about referencing another dbt model, accepted-answer filtering selected an answer focused primarily on BigQuery sources rather than the requested model reference.
+
+The broader strategies retrieved an answer containing the relevant two-argument dbt `ref` syntax.
+
+---
+
+### More context can introduce distractions
+
+For the Snowflake SSO question, the `all` strategy received the correct SSO information but also several unrelated Snowflake troubleshooting answers.
+
+The generated response consequently mixed SSO configuration with unrelated package installation and connection troubleshooting.
+
+The `highest-score` strategy remained more focused.
+
+---
+
+### Retrieval quality does not guarantee generation quality
+
+For the variables question, the accepted-answer context contained useful information about dbt variables, but the local LLM incorrectly concluded that the context did not contain enough information.
+
+This illustrates that a RAG pipeline can retrieve relevant evidence while the generation stage still fails to use it correctly.
+
+---
+
+# Running the Project Locally
+
+## Requirements
+
+The local project uses:
+
+- Python
+- `uv`
+- Java 17 for PySpark
+- Ollama for local generation
+
+Install the Python environment with:
 
 ```bash
-root/
-   |-- dags/
-   |-- src/
-   |   |-- project/
-   |   |-- |-- common/
-   |   |-- |-- |-- spark.py
-   |   |-- |-- tasks/
-   |-- tests/
-   |   |-- common/
-   |   |-- | -- spark.py
-   | Dockerfile
-   | .codespaces.dockerfile
-   | docker-compose.yaml
-   | pyproject.toml
+uv sync
 ```
 
-## AWS access
-In order to access the necessary data on S3, you will need to configure your AWS credentials.
-You can do this by running `aws configure` and filling in the necessary information.
-We will provide you with individual `access_key_id` and `secret_access_key`.
-Specify as default region `eu-west-1`.
+For local LLM generation, install Ollama and pull:
 
-After this you should be able to successfully run the following command:
 ```bash
-aws s3 ls s3://dataminded-academy-capstone-llm-data/input/
+ollama pull llama3.2:3b
 ```
 
-If this works, you are ready to start the project.
+---
 
-## Task 1: Transform and load the stackoverflow data
+## Run the local data and RAG pipeline
 
-### Context
+The master script processes all configured Stack Overflow tags.
 
-Our team already ingested questions and answers from StackOverflow for you to use.
-We used the [StackOverflow API](https://api.stackexchange.com/docs).
-We ingested different tags, pick one of them as a starting point for cleaning your data.
-
-The input data is stored in the following s3 bucket: `dataminded-academy-capstone-llm-data` under path `input/{tag}/`
-The S3 bucket resides in the `eu-west-1` region.
-
-### Your task
-
-Investigate the data, you can download and inspect the json files. Download them as follows:
-
-```
-aws s3 ls s3://dataminded-academy-capstone-llm-data/input/
-aws s3 cp s3://dataminded-academy-capstone-llm-data/input/dbt/questions.json ./
+```bash
+./local/run_all.sh
 ```
 
-Start by writing your cleaning transformation by reading/writing local files and only afterwards interact directly with s3.
+The script is resumable.
 
-Given the input data for 1 tag, the goal is to create 1 json document per question containing the title, question body and the response body.
-So your goal is to extract the relevant fields from both the questions and answers and join them together using the `question_id` field.
+Existing raw data and generated outputs are reused unless forced to run again.
 
-> **_NOTE:_** When reading from s3, make sure to use `s3a://` prefix.
+Useful options include:
 
-> **_NOTE:_** In order for your job to access the s3 bucket, you will need to export the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables.
+```bash
+RUN_EVAL=0 ./local/run_all.sh
+```
 
-Write the cleaned json documents per question again to s3 under path `cleaned/<user>/{tag}`
+Run the processing and indexing pipeline without LLM evaluation.
 
-If you are confident in your code, the next step is scheduling it using Airflow.
+```bash
+FORCE=1 ./local/run_all.sh
+```
 
-## How to run your project
+Rebuild generated outputs.
 
-The following commands are assumed to run in the root of your project.
+```bash
+REFRESH_RAW=1 ./local/run_all.sh
+```
 
-- Create a virtualenv: `uv venv`
-- Install the dependencies:
-  - add dependencies in `pyproject.toml` or use `uv add <pacakage>`
-  - install the dependencies in your virtual environment using `uv sync`
-- Two places to write your transformation logic:
-  - clean.py: your pyspark cleaning code
-  - ingest.py: see Task 3 (only if you have time left)
-- Run the tasks:
-  - install the project in your venv directory as follows: `uv pip install -e .`
-  - run a task: `uv run python3 -m capstonellm.tasks.clean` or `uv run python3 -m capstonellm.tasks.ingest`
-  - you can check if your task ran correctly by running `pytest tests/test_clean.py`
+Download raw Stack Overflow data again.
 
+---
 
-## Task 2: Schedule your task using Airflow
+## Run the RAG evaluation
 
-As you now have working python code, we now want to make sure this is triggered using Airflow.
-We start with a local installation of Airflow, you can use the `docker-compose.yml` file, similar to the setup used in the Airflow session.
+Evaluate the three answer strategies for the dbt test set:
 
-### Your task
+```bash
+uv run python local/rag/evaluate.py -t dbt
+```
 
-- Package the python code in a Dockerfile. If you used the provided scaffolding, this should be easy. Take a look at the Dockerfile and make sure you understand everything
-- Create an Airflow DAG with one task (clean) that will run your clean job using the [DockerOperator](https://airflow.apache.org/docs/apache-airflow/1.10.9/_api/airflow/operators/docker_operator/index.html).
-  In order to access S3, you will have to pass your credentials to the Docker container.
+The evaluator writes results incrementally, so interrupted evaluations can be resumed.
 
-## Task 3: Ingest the stackoverflow data
+Results are stored under:
 
-> **_NOTE:_** This is an optional task, if you still have time.
+```text
+local/rag/evaluation/
+```
 
-The goal here is to create the input data yourself instead of relying on the data that we have provided.
-In order to do this you will have to investigate the [Stackoverflow API](https://api.stackexchange.com/docs).
-You should call the API and fetch the questions and answers separately, which can be done as follows:
+Apply the manually reviewed quality scores with:
 
-- Query the questions given 1 or more specified tags
-- Using the question IDs from the previous step, look for the relevant answers
+```bash
+uv run python local/rag/apply_scores.py
+```
 
-As a best practice, this raw data is not pre-processed/cleaned, but dumped "as is" in the S3 bucket under path `/input/{user}/{tag}`.
-The processing and cleaning, you already did in the cleaning step.
-This way, if you made a mistake while cleaning, you can start again from the raw data without calling the API again.
+---
 
-## Task 4: Deploy to Conveyor
+# Local Project Structure
 
-Now that we have verified all our code locally, it is now time to deploy it to production environment.
-In our case this will be Conveyor.
+```text
+local/
+├── benchmark.py
+├── benchmarks/
+│   └── dbt.csv
+├── data/
+│   ├── raw/
+│   ├── cleaned/
+│   └── rag/
+├── dbt_duckdb/
+│   ├── dbt_project.yml
+│   ├── profiles.yml
+│   └── models/
+│       ├── staging/
+│       ├── intermediate/
+│       └── marts/
+├── ingest.py
+├── polars/
+│   └── clean.py
+├── rag/
+│   ├── prepare_documents.py
+│   ├── build_index.py
+│   ├── query.py
+│   ├── generate.py
+│   ├── evaluate.py
+│   ├── apply_scores.py
+│   └── evaluation/
+├── spark/
+│   └── clean.py
+├── run_spark_all.sh
+└── run_all.sh
+```
 
-- Login to Conveyor: `conveyor auth login`
-- Create a Conveyor project with the following name: `capstone-llm-{user}` from the root directory.
-- Tweak the `conveyor_example.py` to run your job using the [ConveyorContainerOperatorV2](https://docs.conveyordata.com/technical-reference/airflow/operators/conveyor-container-operator-v2).
-- Instead of using the AWS credentials directly, as we did locally, you now attach the `capstone_conveyor_llm` role.
-- To test things out you can run: `conveyor run`
-- Build and deploy your project: `conveyor build && conveyor deploy --env test`
+Generated dbt files, caches, vector indexes, local databases, and large intermediate datasets are excluded from version control where appropriate.
 
-## Useful commands
+---
 
-Setup virtual environment:
+# What This Project Demonstrates
 
-- `source ./venv/bin/activate` to activate the virtual environment
+The project started as a data engineering capstone and evolved into a broader experiment connecting data engineering with applied LLM systems.
 
-Tasks:
+It demonstrates:
 
-- `uv sync` to install the dependencies in a virtual environment
-- `uv pip install -e .` to install the current project in your virtual environment
-- `docker compose up -d` to start the airflow server
-- `uv export --format requirements-txt > requirements.txt` to export the dependencies to a `requirements.txt` file
-- `uv run python3 -m capstonellm.tasks.clean` run clean task locally
+- consuming and paginating a public REST API;
+- designing raw and cleaned data layers;
+- distributed processing with PySpark;
+- local DataFrame processing with Polars;
+- analytical SQL with DuckDB;
+- transformation management with dbt;
+- workflow orchestration with Airflow;
+- cloud execution using Conveyor and S3;
+- reproducible benchmarking;
+- preprocessing semi-structured text;
+- semantic embeddings;
+- vector indexing with FAISS;
+- retrieval design;
+- local LLM serving with Ollama;
+- RAG evaluation beyond retrieval similarity alone.
+
+Most importantly, the RAG experiment shows that retrieval systems need to be evaluated as complete pipelines. Increasing the amount of retrieved context does not necessarily improve the final answer, and simple metadata such as Stack Overflow answer scores can be useful for controlling both quality and inference cost.
+
+---
+
+## Background
+
+This repository originated from the **DataMinded Academy Summer School** capstone project and was subsequently extended beyond the original assignment to explore alternative data-processing technologies and retrieval-augmented generation.
