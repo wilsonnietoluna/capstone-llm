@@ -1,0 +1,33 @@
+{
+  "airflow": [
+    "How do I define dependencies between tasks in Airflow?",
+    "How do I pass data between Airflow tasks?"
+  ],
+  "apache-spark": [
+    "How do I join DataFrames in Apache Spark?",
+    "How do I handle null values in Spark?"
+  ],
+  "dbt": [
+    "How do I reference another model in dbt?",
+    "How do I use variables in dbt?",
+    "How do I load a CSV file in dbt?",
+    "How do I configure an incremental model in dbt?",
+    "How do I connect dbt to Snowflake using SSO?"
+  ],
+  "docker": [
+    "How do I pass environment variables to a Docker container?",
+    "How do I mount a volume in Docker?"
+  ],
+  "pyspark": [
+    "How do I filter rows in a PySpark DataFrame?",
+    "How do I group and aggregate data in PySpark?"
+  ],
+  "python-polars": [
+    "How do I filter rows in a Polars DataFrame?",
+    "How do I group and aggregate data in Polars?"
+  ],
+  "sql": [
+    "How do I join two tables in SQL?",
+    "How do I find duplicate rows in SQL?"
+  ]
+}

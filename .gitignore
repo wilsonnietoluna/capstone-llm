@@ -13,3 +13,10 @@ build
 data/
 .env
 local/data/
+
+# dbt generated files
+local/dbt_duckdb/target/
+local/dbt_duckdb/logs/
+
+# Python cache
+local/rag/__pycache__/
